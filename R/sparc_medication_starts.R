@@ -44,59 +44,45 @@ sparc_med_starts <- function(prescriptions, demographics, observations, encounte
 
   medication <- sparc_med_filter(prescriptions, observations, demographics, encounter, med_groups )
 
-
+  # local function to clean up medication dates, will likely be removed in a later revision.
+  prepare_med_dates <- function(medication)
+  {
+    medication %>%
+      filter(DATA_SOURCE == "ECRF_SPARC") %>%
+      mutate(
+        MED_START_DATE = dmy(MED_START_DATE),
+        MED_END_DATE = dmy(MED_END_DATE)
+      ) %>%
+      mutate(
+        MED_START_DATE = if_else(year(MED_START_DATE) > 1980, MED_START_DATE, as.Date(NA, format = "%d-%m-%y")),
+        MED_END_DATE = if_else(year(MED_END_DATE) > 1980, MED_END_DATE, as.Date(NA, format = "%d-%m-%y"))
+      )
+  }
   # ECRF DATA ----
 
   # Find Start Date in eCRF Data ----
 
-  start_ecrf <- medication %>%
-    filter(DATA_SOURCE == "ECRF_SPARC") %>%
-    mutate(
-      MED_START_DATE = dmy(MED_START_DATE),
-      MED_END_DATE = dmy(MED_END_DATE)
-    ) %>%
-    mutate(
-      MED_START_DATE = if_else(year(MED_START_DATE) > 1980, MED_START_DATE, as.Date(NA, format = "%d-%m-%y")),
-      MED_END_DATE = if_else(year(MED_END_DATE) > 1980, MED_END_DATE, as.Date(NA, format = "%d-%m-%y"))
-    ) %>%
+  start_ecrf <-  medication %>%
+    prepare_med_dates() %>%
     drop_na(MED_START_DATE) %>%
-    pivot_longer(cols = c(MED_START_DATE, MED_END_DATE), names_to = "type", values_to = "date") %>%
-    group_by(DEIDENTIFIED_MASTER_PATIENT_ID, new_med_name, DATA_SOURCE) %>%
-    slice(which.min(date)) %>%
-    pivot_wider(names_from = type, values_from = date) %>%
-    ungroup() %>%
     distinct(DEIDENTIFIED_MASTER_PATIENT_ID, DATA_SOURCE, new_med_name, MED_START_DATE) %>%
+    group_by(DEIDENTIFIED_MASTER_PATIENT_ID, new_med_name) %>%
+    slice(which.min(MED_START_DATE)) %>%
+    ungroup()  %>%
     rename(med = new_med_name)
 
   # Find End Date in eCRF Data ----
   end_ecrf <- medication %>%
-    filter(DATA_SOURCE == "ECRF_SPARC") %>%
-    mutate(
-      MED_START_DATE = dmy(MED_START_DATE),
-      MED_END_DATE = dmy(MED_END_DATE)
-    ) %>%
-    mutate(
-      MED_START_DATE = if_else(year(MED_START_DATE) > 1980, MED_START_DATE, as.Date(NA, format = "%d-%m-%y")),
-      MED_END_DATE = if_else(year(MED_END_DATE) > 1980, MED_END_DATE, as.Date(NA, format = "%d-%m-%y"))
-    ) %>%
-    pivot_longer(cols = c(MED_START_DATE, MED_END_DATE), names_to = "type", values_to = "date") %>%
-    arrange(DEIDENTIFIED_MASTER_PATIENT_ID, new_med_name, DATA_SOURCE, match(type, c("MED_END_DATE", "MED_START_DATE"))) %>%
-    group_by(DEIDENTIFIED_MASTER_PATIENT_ID, new_med_name, DATA_SOURCE) %>%
-    slice(which.max(date)) %>%
-    pivot_wider(names_from = type, values_from = date) %>%
+    prepare_med_dates() %>%
+    distinct(DEIDENTIFIED_MASTER_PATIENT_ID, DATA_SOURCE, new_med_name, MED_END_DATE) %>%
+    group_by(DEIDENTIFIED_MASTER_PATIENT_ID, new_med_name) %>%
+    slice(which.max(MED_END_DATE)) %>%
     ungroup() %>%
-    distinct(DEIDENTIFIED_MASTER_PATIENT_ID, DATA_SOURCE, new_med_name, MED_START_DATE, MED_END_DATE, CURRENT_MEDICATION) %>%
-    rename(MED_START_DATE_2 = MED_START_DATE) %>%
     rename(med = new_med_name)
 
   # Combine start and stop for eCRF ----
   med_ecrf <- full_join(start_ecrf, end_ecrf, by = c("DEIDENTIFIED_MASTER_PATIENT_ID", "DATA_SOURCE", "med")) %>%
-    mutate(CURRENT_MEDICATION = case_when(
-      is.na(MED_END_DATE) ~ "YES",
-      !is.na(MED_END_DATE) ~ "NO",
-      TRUE ~ CURRENT_MEDICATION
-    )) %>%
-    select(-MED_START_DATE_2) %>%
+    mutate(CURRENT_MEDICATION = if_else(is.na(MED_END_DATE) ,"YES", "NO")) %>%
     mutate(DATA_SOURCE = gsub("_SPARC", "", DATA_SOURCE)) %>%
     pivot_wider(
       id_cols = c(DEIDENTIFIED_MASTER_PATIENT_ID, med),
@@ -504,10 +490,10 @@ sparc_med_starts <- function(prescriptions, demographics, observations, encounte
     select(DEIDENTIFIED_MASTER_PATIENT_ID, MEDICATION, MED_START_DATE, MED_END_DATE) %>%
     pivot_longer(cols = c(MED_START_DATE, MED_END_DATE), names_to = "type", values_to = "date") %>%
     drop_na(date) %>%
-    arrange(DEIDENTIFIED_MASTER_PATIENT_ID, date) %>%
-    distinct(DEIDENTIFIED_MASTER_PATIENT_ID, MEDICATION) %>%
     group_by(DEIDENTIFIED_MASTER_PATIENT_ID) %>%
-    mutate(MEDICATION_NUMBER = seq_along(DEIDENTIFIED_MASTER_PATIENT_ID)) %>%
+    arrange(date, .by_group = TRUE) %>%
+    distinct(DEIDENTIFIED_MASTER_PATIENT_ID, MEDICATION) %>%
+    mutate(MEDICATION_NUMBER = row_number() ) %>%
     ungroup()
 
   med <- med %>%
