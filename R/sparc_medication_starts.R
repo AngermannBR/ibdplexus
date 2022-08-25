@@ -13,7 +13,7 @@
 #' @param encounter A dataframe with encounter data usually generated using load_data.
 #' @param med_groups A list of medication groups of interest. For details, refer to \code{\link{sparc_med_filter}}.
 #' @param export if excel spreadsheet should be exported. FALSE is default.
-#'
+#' @param dgb generate debug warning when assumptions about the the structure of the input data-set are violated.
 #' @return A dataframe with the first medication start date for each drug.
 #'
 #' @details Medication start and stop dates are chosen independently from both eCRF and EMR sources. Medications with a start or stop date before 1980 are dropped.
@@ -38,7 +38,7 @@
 #'
 #' @export
 #'
-sparc_med_starts <- function(prescriptions, demographics, observations, encounter,med_groups = c("Biologic", "Aminosalicylates", "Immunomodulators"), export = FALSE) {
+sparc_med_starts <- function(prescriptions, demographics, observations, encounter,med_groups = c("Biologic", "Aminosalicylates", "Immunomodulators"), export = FALSE, dbg = FALSE) {
 
   # Get medications of interest
 
@@ -93,44 +93,27 @@ sparc_med_starts <- function(prescriptions, demographics, observations, encounte
 
   # Number of Dose Changes in eCRF ----
 
+  collpase_dose <- function(x) {
+    x[x == 0] <- NA
+    result <- unique(na.omit(x))
+    if (dbg & length(result) > 1 )
+    {
+      warning(paste0("Found ",length(result), " medication doses in ecrf with the same starting date."))
+    }
+    return(if (length(result) == 0 ) NA else max(result))
+  }
+
   dose_ecrf <- medication %>%
-    filter(DATA_SOURCE == "ECRF_SPARC") %>%
-    mutate(
-      MED_START_DATE = dmy(MED_START_DATE),
-      MED_END_DATE = dmy(MED_END_DATE)
-    ) %>%
-    mutate(
-      MED_START_DATE = if_else(year(MED_START_DATE) > 1980, MED_START_DATE, as.Date(NA, format = "%d-%m-%y")),
-      MED_END_DATE = if_else(year(MED_END_DATE) > 1980, MED_END_DATE, as.Date(NA, format = "%d-%m-%y"))
-    ) %>%
+    prepare_med_dates() %>%
     mutate(DOSE_OF_MEDICATION = readr::parse_number(DOSE_OF_MEDICATION)) %>%
-    distinct(DEIDENTIFIED_MASTER_PATIENT_ID, DATA_SOURCE, new_med_name, DOSE_OF_MEDICATION, MED_START_DATE, MED_END_DATE) %>%
-    group_by(DEIDENTIFIED_MASTER_PATIENT_ID, new_med_name) %>%
-    arrange(DEIDENTIFIED_MASTER_PATIENT_ID, new_med_name,MED_START_DATE) %>%
-    mutate(c = seq_along(DEIDENTIFIED_MASTER_PATIENT_ID)) %>%
-    pivot_wider(
-      id_cols = c(DEIDENTIFIED_MASTER_PATIENT_ID, DATA_SOURCE, new_med_name),
-      names_from = c,
-      values_from = c(DOSE_OF_MEDICATION),
-      names_prefix = "DOSE_"
-    ) %>%
-    drop_na(DOSE_2) %>%
-    rowwise() %>%
-    mutate(
-      NEW_DOSE_1 = ifelse(is.na(DOSE_1), DOSE_2, DOSE_1),
-      DOSE_2 = ifelse(is.na(DOSE_1), as.numeric(NA), DOSE_2)
-    ) %>%
-    select(-DOSE_1) %>%
-    rename(DOSE_1 = NEW_DOSE_1) %>%
-    mutate(NUMBER_OF_DOSE_CHANGES = sum(!is.na(c_across(DOSE_2:DOSE_6)), na.rm = T)) %>%
-    ungroup() %>%
+    group_by(DEIDENTIFIED_MASTER_PATIENT_ID,DATA_SOURCE, new_med_name,MED_START_DATE) %>%
+    summarise(DOSE_OF_MEDICATION = collpase_dose(DOSE_OF_MEDICATION), .groups = "drop_last") %>% # Collapse all entries from the same patient/med/starting date to a single dose
+    drop_na(DOSE_OF_MEDICATION) %>% # remove non-informative entries
+    select(-MED_START_DATE) %>% # Discard date column
+    distinct_all() %>% # these should now be the unique doses per patient and medication
+    summarise(NUMBER_OF_DOSE_CHANGES = n() - 1, .groups = "drop") %>%
     mutate(DATA_SOURCE = gsub("_SPARC", "", DATA_SOURCE)) %>%
-    pivot_wider(
-      id_cols = c(DEIDENTIFIED_MASTER_PATIENT_ID, new_med_name),
-      names_from = DATA_SOURCE,
-      values_from = c(NUMBER_OF_DOSE_CHANGES),
-      names_prefix = "NUMBER_OF_DOSE_CHANGES_"
-    ) %>%
+    rename(NUMBER_OF_DOSE_CHANGES_ECRF = NUMBER_OF_DOSE_CHANGES) %>%
     rename(MEDICATION = new_med_name)
 
   # Frequency Change in eCRF ----
