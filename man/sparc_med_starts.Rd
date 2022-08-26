@@ -10,7 +10,8 @@ sparc_med_starts(
   observations,
   encounter,
   med_groups = c("Biologic", "Aminosalicylates", "Immunomodulators"),
-  export = FALSE
+  export = FALSE,
+  dbg = FALSE
 )
 }
 \arguments{
@@ -25,6 +26,8 @@ sparc_med_starts(
 \item{med_groups}{A list of medication groups of interest. For details, refer to \code{\link{sparc_med_filter}}.}
 
 \item{export}{if excel spreadsheet should be exported. FALSE is default.}
+
+\item{dgb}{generate debug warning when assumptions about the the structure of the input data-set are violated.}
 }
 \value{
 A dataframe with the first medication start date for each drug.
