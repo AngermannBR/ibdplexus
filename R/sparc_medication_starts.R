@@ -112,7 +112,7 @@ sparc_med_starts <- function(prescriptions, demographics, observations, encounte
     select(-MED_START_DATE) %>% # Discard date column
     distinct_all() %>% # these should now be the unique doses per patient and medication
     summarise(NUMBER_OF_DOSE_CHANGES = n() - 1, .groups = "drop") %>%
-    mutate(DATA_SOURCE = gsub("_SPARC", "", DATA_SOURCE)) %>%
+    select(-DATA_SOURCE) %>%
     rename(NUMBER_OF_DOSE_CHANGES_ECRF = NUMBER_OF_DOSE_CHANGES) %>%
     rename(MEDICATION = new_med_name)
 
